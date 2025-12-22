@@ -1,0 +1,86 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+\begin{document}
+
+\section*{RMSNorm Backward Pass Derivation for one row}
+
+\subsection*{Forward Pass}
+Given input $x \in \mathbb{R}^{1 \times N}$, RMSNorm is defined as:
+\begin{equation}
+y = \text{RMSNorm}(x) = \frac{x}{\text{RMS}(x)} \odot g
+\end{equation}
+where:
+\begin{align}
+\text{RMS}(x) &= \sqrt{\frac{1}{N}\sum_{i=1}^{N} x_i^2 + \epsilon} 
+\end{align}
+\subsection*{Backward Pass}
+Given gradient $dy = \frac{\partial L}{\partial y} \in \mathbb{R}^{1 \times N}$:
+\begin{equation}
+dx = dy @ J
+\end{equation}
+The expanded matrix multiplication becomes:
+\begin{align}
+\begin{bmatrix} dx_1 & dx_2 & \cdots & dx_N \end{bmatrix}
+& = \begin{bmatrix} dy_1 & dy_2 & \cdots & dy_N \end{bmatrix}\begin{bmatrix}
+&- & \frac{\partial y_1}{\partial x} & - &\\[6pt]
+&- & \frac{\partial y_2}{\partial x} & - &\\[6pt]
+&\vdots & \vdots & \vdots &\\[6pt]
+&- & \frac{\partial y_N}{\partial x} & - &\\[6pt]
+\end{bmatrix}\\
+& = \begin{bmatrix} dy_1 & dy_2 & \cdots & dy_N \end{bmatrix}
+\begin{bmatrix}
+\frac{\partial y_1}{\partial x_1} & \frac{\partial y_1}{\partial x_2} & \cdots & \frac{\partial y_1}{\partial x_N} \\[6pt]
+\frac{\partial y_2}{\partial x_1} & \frac{\partial y_2}{\partial x_2} & \cdots & \frac{\partial y_2}{\partial x_N} \\[6pt]
+\vdots & \vdots & \ddots & \vdots \\[6pt]
+\frac{\partial y_N}{\partial x_1} & \frac{\partial y_N}{\partial x_2} & \cdots & \frac{\partial y_N}{\partial x_N}
+\end{bmatrix}
+\end{align}
+\subsection*{Jacobian Derivation}
+Let $y_j = \frac{x_j}{r}$ where $r = \text{RMS}(x)$.
+
+\textbf{Step 1:} Apply the product rule:
+\begin{equation}
+\frac{\partial y_j}{\partial x_k} = \frac{\partial x_j}{\partial x_k} \cdot r^{-1} + x_j \cdot \frac{\partial (r^{-1})}{\partial x_k}
+\end{equation}
+
+\textbf{Step 2:} Compute $\frac{\partial r}{\partial x_k}$:
+\begin{equation}
+\frac{\partial r}{\partial x_k} = \frac{1}{2}\left(\frac{1}{N}\sum_{i=1}^{N} x_i^2\right)^{-1/2} \cdot \frac{2x_k}{N} = \frac{x_k}{N \cdot r}
+\end{equation}
+
+\textbf{Step 3:} Compute $\frac{\partial (r^{-1})}{\partial x_k}$:
+\begin{equation}
+\frac{\partial (r^{-1})}{\partial x_k} = -r^{-2} \cdot \frac{x_k}{N \cdot r} = -\frac{x_k}{N \cdot r^3}
+\end{equation}
+
+\textbf{Step 4:} Final Jacobian:
+\begin{equation}
+J_{jk} = \frac{\partial y_j}{\partial x_k} = \frac{\delta_{jk}}{r} - \frac{x_j x_k}{N \cdot r^3} = \frac{1}{r}\left(\delta_{jk} - \frac{x_j x_k}{N \cdot r^2}\right)
+\end{equation}
+
+In matrix form:
+\begin{equation}
+J_{(N\times N)} = \frac{1}{r}\left(I - \frac{x^Tx}{N \cdot r^2}\right)
+\end{equation}
+- x is a row vector here. so the shape of $x^Tx$ is (N, N).
+
+\textbf{Vector form:}
+\begin{equation}
+dx = dy\cdot J = \frac{1}{r}\left(dy- \frac{dy\cdot x^T\cdot x}{Nr^2} \right )
+= \frac{1}{r}\left(dy- \underbrace{(dy\cdot x^T)}_{scalar}\frac{1}{Nr^2}x \right )
+\end{equation}
+
+\textbf{With scale parameter $g$:}
+
+\begin{align}
+dx = (g\odot dy)\cdot J 
+& = \frac{1}{r}\left((g\odot dy)- \underbrace{((g\odot dy)\cdot x^T)}_{scalar}\frac{1}{Nr^2}x \right )\\
+& = \frac{1}{r}\left((g\odot dy) - \underbrace{\frac{ (g \odot dy) \cdot x^T}{N \cdot r^2}}_{scalar}\odot  x\right) \\
+& = \frac{1}{r}\left((g\odot dy) - \underbrace{\frac{ (g \odot dy) \cdot \hat x^T}{N}}_{scalar}\odot  \hat x\right) , Let\ \hat x = \frac{x}{r}\\
+\end{align}
+
+
+
+\end{document}

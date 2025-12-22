@@ -1,0 +1,134 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+\begin{document}
+
+\section{LayerNorm Backward Derivation for One Row}
+
+\subsection{Forward Pass}
+
+For input $\mathbf{x} \in \mathbb{R}^{1 \times N}$, LayerNorm computes:
+
+\begin{equation}
+\mu = \frac{1}{N}\sum_{i=1}^{N} x_i
+\end{equation}
+
+\begin{equation}
+\sigma^2 = \frac{1}{N}\sum_{i=1}^{N} (x_i - \mu)^2
+\end{equation}
+
+\begin{equation}
+\hat{x}_i = \frac{x_i - \mu}{\sqrt{\sigma^2 + \epsilon}}
+\end{equation}
+
+\begin{equation}
+y_i = \gamma \hat{x}_i + \beta
+\end{equation}
+
+For simplicity, let's assume $\gamma = 1$ and $\beta = 0$ (they can be added back easily), so:
+
+\begin{equation}
+y_i = \frac{x_i - \mu}{\sqrt{\sigma^2 + \epsilon}}
+\end{equation}
+
+\subsection{Jacobian Derivation}
+
+We need to compute $\frac{\partial y_i}{\partial x_j}$ for all $i, j \in \{1, 2, \ldots, N\}$.
+
+Let $\sigma = \sqrt{\sigma^2 + \epsilon}$ for notation simplicity.
+
+\begin{equation}
+\frac{\partial y_i}{\partial x_j} = \frac{\partial}{\partial x_j}\left(\frac{x_i - \mu}{\sigma}\right)
+\end{equation}
+
+Using the quotient rule and chain rule:
+
+\begin{equation}
+\frac{\partial y_i}{\partial x_j} = \frac{1}{\sigma}\frac{\partial (x_i - \mu)}{\partial x_j} - \frac{x_i - \mu}{\sigma^2}\frac{\partial \sigma}{\partial x_j}
+\end{equation}
+
+\subsubsection{Computing $\frac{\partial \mu}{\partial x_j}$}
+
+\begin{equation}
+\frac{\partial \mu}{\partial x_j} = \frac{\partial}{\partial x_j}\left(\frac{1}{N}\sum_{k=1}^{N} x_k\right) = \frac{1}{N}
+\end{equation}
+
+\subsubsection{Computing $\frac{\partial \sigma}{\partial x_j}$}
+
+\begin{equation}
+\frac{\partial \sigma}{\partial x_j} = \frac{\partial}{\partial x_j}\sqrt{\sigma^2 + \epsilon} = \frac{1}{2\sigma}\frac{\partial \sigma^2}{\partial x_j}
+\end{equation}
+
+\begin{equation}
+\frac{\partial \sigma^2}{\partial x_j} = \frac{\partial}{\partial x_j}\left(\frac{1}{N}\sum_{k=1}^{N}(x_k - \mu)^2\right)
+\end{equation}
+
+\begin{equation}
+= \frac{1}{N}\sum_{k=1}^{N} 2(x_k - \mu)\left(\delta_{kj} - \frac{1}{N}\right)
+\end{equation}
+
+\begin{equation}
+= \frac{2}{N}(x_j - \mu) - \frac{2}{N^2}\sum_{k=1}^{N}(x_k - \mu)
+\end{equation}
+
+Since $\sum_{k=1}^{N}(x_k - \mu) = 0$:
+
+\begin{equation}
+\frac{\partial \sigma^2}{\partial x_j} = \frac{2}{N}(x_j - \mu)
+\end{equation}
+
+Therefore:
+
+\begin{equation}
+\frac{\partial \sigma}{\partial x_j} = \frac{1}{2\sigma} * \frac{2}{N}(x_j - \mu) = \frac{x_j - \mu}{N\sigma}
+\end{equation}
+
+\subsubsection{Combining terms}
+
+\begin{equation}
+J_{ij} = \frac{\partial y_i}{\partial x_j} = \frac{1}{\sigma}\left(\delta_{ij} - \frac{1}{N}\right) - \frac{x_i - \mu}{\sigma^2} * \frac{x_j - \mu}{N\sigma}
+\end{equation}
+
+\begin{equation}
+= \frac{1}{\sigma}\left(\delta_{ij} - \frac{1}{N}\right) - \frac{(x_i - \mu)(x_j - \mu)}{N\sigma^3}
+\end{equation}
+
+\begin{equation}
+= \frac{1}{\sigma}\left(\delta_{ij} - \frac{1}{N} - \frac{\hat{x}_i \hat{x}_j}{N}\right)
+\end{equation}
+
+where $\hat{x}_i = \frac{x_i - \mu}{\sigma}$.
+
+\subsection{Jacobian Matrix}
+
+\begin{equation}
+J_{(N\times N)} = \frac{\partial y}{\partial x} = \frac{1}{\sigma}\left(I - \frac{1}{N}\mathbf{1}^T\mathbf{1}  - \frac{\hat{x} ^T\hat{x}}{N}\right)
+\end{equation}
+- $\mathbf{1}$ is a row vector with all elements equal to 1 and the same shape as x.
+
+\subsection{Backward Pass}
+
+Given $\frac{\partial L}{\partial \mathbf{y}} = \mathbf{dy} \in \mathbb{R}^{1 \times N}$, we compute:
+
+\begin{align}
+dx & = dy\cdot J \\
+& = \frac{1}{\sigma}\left(dy - \frac{1}{N}\underbrace{(dy\cdot \mathbf{1}^T)}_{scalar 1} \mathbf{1}  - \frac{1}{N}\underbrace{(dy\cdot \hat{x} ^T)}_{scalar 2} \hat{x}\right)\\
+& = \frac{1}{\sigma}\left(dy - mean(dy) \mathbf{1}  - mean(dy\odot \hat{x} ) \hat{x}\right)\\
+\end{align}
+Let:
+\begin{itemize}
+\item $\text{mean}(\mathbf{dy}) = \frac{1}{N}\sum_{i=1}^{N}dy_i$
+\item $\text{mean}(\mathbf{dy} \odot \hat{\mathbf{x}}) = \frac{1}{N}\sum_{i=1}^{N}dy_i\hat{x}_i$
+\end{itemize}
+
+where $\sigma = \sqrt{\frac{1}{N}\sum_{i=1}^{N}(x_i - \mu)^2 + \epsilon}$ and $\hat{\mathbf{x}} = \frac{\mathbf{x} - \mu}{\sigma}$.
+
+\subsection{Backward Pass add in w}
+\begin{align}
+dx & = (w\odot dy)\cdot J \\
+& = \frac{1}{\sigma}\left((w\odot dy)- \frac{1}{N}\underbrace{((w\odot dy)\cdot \mathbf{1}^T)}_{scalar 1} \mathbf{1}  - \frac{1}{N}\underbrace{((w\odot dy)\cdot \hat{x} ^T)}_{scalar 2} \hat{x}\right)\\
+& = \frac{1}{\sigma}\left((w\odot dy) - mean((w\odot dy)) \mathbf{1}  - mean((w\odot dy)\odot \hat{x} ) \hat{x}\right)\\
+\end{align}
+
+\end{document}
