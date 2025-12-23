@@ -25,7 +25,7 @@ class ScaledDotProductAttention(torch.autograd.Function):
         
         legal_d = {16, 32, 64, 128, 256, 512}
         assert d in legal_d, f'unsupported value of head dim, only supprt one of {legal_d}'
-
+        
         q, k, v = q.view(B*H, T, d), k.view(B*H, T, d), v.view(B*H, T, d)
         scale = 1 / (d ** 0.5) if scale == None else scale
 
@@ -38,21 +38,32 @@ class ScaledDotProductAttention(torch.autograd.Function):
         L = torch.empty((B*H, T), device=q.device, dtype=torch.float32) 
 
         # larger blocks could redule number of iterations in the inner loop, and so
-        # reduce the total memory cost. but would increase shared memory pressure on the GPU
+        # reduce the total memory cost. but also increase shared memory pressure on the GPU
         # so the best strategy is use the largest block the gpu could afford
-        # Br, Bc = 32, 32
-        Br, Bc = 16, 16
+        Br, Bc = 32, 32
+        # Br, Bc = 16, 16
 
-        # use this condition to simplify the indexing of tiles on the diagonal
-        # when causal=True
-        assert Br % Bc == 0, 'keep Br % Bc == 0 to make kernel index simple'
+        assert T % Bc == 0, 'T must be divisible by Bc. ' 
+        # The 'tl.make_block_ptr()' can not pad 'float('-inf')' when loading data.
+        # If T is not divisible by Bc, and using 'tl.make_block_ptr()' with zero
+        # padding, the value of m_i would be twisted when loading the last block of k.
+        # This also twists the value of softmax(qkT) under non-causal mode.
+        # We could correct it by adding a mask after the last block of k is loaded.
+        # see 'att_fwd_inner' part of code for details.
+
+        # To avoid adding complex masking logic (which would be inefficient),
+        # here we choose to restrict T to be divisible by Bc. 
+        # This sidesteps the padding issue entirely.
+        
+        # And zero padding has no affect to the result of softmax when causal=True.
 
         grid = lambda meta: (triton.cdiv(T, meta['Br']), B*H, 1)
         att_fwd_kernel[grid](
             scale, q, k, v, o, L, 
             q.stride(0), q.stride(1), q.stride(2), # k, v, o has the same stride
             L.stride(0), L.stride(1), 
-            B*H, T, d, BF16,
+            B*H, T, d, 
+            BF16,
             is_causal=is_causal, 
             BLOCK_SIZE_D = triton.next_power_of_2(d),
             Br = Br, Bc = Bc,

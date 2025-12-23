@@ -55,17 +55,17 @@ def test_fwd(configs, mode:str='ones', dtype=torch.bfloat16, device=DEVICE):
                     # torch_o = ref_sdpa(q, k, v, causal, scale, device)
 
                     if not torch.allclose(o, torch_o):
-                        print(f'causal={causal}, scale={scale}, T={T}, d={d}:')
-                        print(torch.max(torch.abs(o - torch_o)).item())
-                        for i in range(v.shape[2]):
-                            if not torch.allclose(o[0, 0, i], torch_o[0, 0, i]):
-                                # print(i, end='/')
-                                if i in [0]:
-                                    print(i)
-                                    print(o[0, 0, i])
-                                    print(torch_o[0, 0, i])
-                                    print(o[0, 0, i] - torch_o[0, 0, i])
-                        print('/n')
+                        dist = torch.max(torch.abs(o - torch_o)).item()
+                        print(f'causal={causal}, scale={scale}, T={T}, d={d}: {dist}')
+                        # for i in range(v.shape[2]):
+                        #     if not torch.allclose(o[0, 0, i], torch_o[0, 0, i]):
+                        #         # print(i, end='/')
+                        #         if i in [0]:
+                        #             print(i)
+                        #             print(f'triton {i}th row: {o[0, 0, i]}')
+                        #             print(f'torch  {i}th row: {torch_o[0, 0, i]}')
+                        #             print(f'dist of {i}th row: {o[0, 0, i] - torch_o[0, 0, i]}')
+                        # print('/n')
                         print('='*80)
                     else:
                         print(f'causal={causal}, scale={scale}, T={T}, d={d}:')
@@ -125,11 +125,11 @@ if __name__ == '__main__':
     configs = {
         'causal': [False], 
         'scale': [1.0] , 
-        'T': [2048], # [i for in range(100, 200, 10)]
-        'd': [16], 
+        'T': [i for i in range(100, 400, 5)], 
+        'd': [256], 
     }
 
-    test_fwd(configs, mode='ones') 
+    test_fwd(configs, mode='random') 
     # Problem Recording: 
     # if mode='ones', dtype=torch.float32, scale=1.0, T>= 2048, d=16, then there is a problem in forward kernel.
     # 'o_i = adjust_factor[:, None] * o_i + acc' this line gives wrong answer. See the code part for explaination.

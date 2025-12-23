@@ -11,7 +11,12 @@ def _att_fwd_inner(
     Br: tl.constexpr, Bc: tl.constexpr, BLOCK_SIZE_D: tl.constexpr,  
 ):
     if stage == 0:   # no mask is used
-        low, high = 0, T
+        low, high = 0, T 
+        # when using tl.make_block_ptr(), the padding_option can not be "float('-inf')"
+        # if T is not divisible by Bc, and the last block of K pads zeros, then the padded
+        # zeros might cause the m_i value to be different from the correct one
+        # so, we need to deal with the last block independently.
+        # to avoid this complexity, we ask that T must be divisible by Bc.
     elif stage == 1: # processing tiles below the diagonal
         low, high = 0, idx_row * Br
     elif stage == 2: # processing tiles on the diagonal
@@ -110,6 +115,7 @@ def _att_fwd_inner(
         # # this kind of advance method would got wrong result, do not know why, just do not use
         # k_block_ptr = k_block_ptr.advance((0, Bc, 0))
         # v_block_ptr = v_block_ptr.advance((0, Bc, 0))
+
     return o_i, l_i, m_i
 
 @triton.jit
@@ -123,6 +129,8 @@ def att_fwd_kernel(
     BLOCK_SIZE_D: tl.constexpr, # next_power_of_2(d)
     Br: tl.constexpr, Bc: tl.constexpr, 
 ):
+    tl.static_print('block_size_D', BLOCK_SIZE_D)
+    tl.static_print('Bc', Bc)
     tl.static_assert(BLOCK_SIZE_D >= Bc) # for better performance of triton GEMM ops
     dtype = tl.bfloat16 if BF16 else tl.float32
 

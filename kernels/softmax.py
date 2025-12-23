@@ -1,14 +1,13 @@
 import torch
 from torch import tensor
-import os
-
-from torch._inductor.config import max_autotune
-
 from kernels.triton_utils import check_tensor_gpu_ready
 import triton
 from triton.runtime import driver
 import triton.language as tl
 import torch.cuda.nvtx as nvtx
+# In this file, there are two softmax kernels implemented by using different method
+# 1. The softmax() use persistent PIs, 
+# 2. The softmax_per_row simply process matrix row by row.
 
 # hardware attributes for kernel setting
 DEVICE = triton.runtime.driver.active.get_active_torch_device()
