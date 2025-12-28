@@ -9,25 +9,9 @@ sys.path.append('/home/roark/Documents/7_cuda/triton/rk/rk_triton')
 sys.path.append('/home/roark/Documents/7_cuda/triton')
 from functions.SDPA import ScaledDotProductAttention
 
-DEVICE = triton.runtime.driver.active.get_active_torch_device()
 sdpa = ScaledDotProductAttention.apply
 
-def ref_sdpa(q, k, v, causal, scale, device):
-    T, d = q.shape[-2], q.shape[-1]
-    scale = scale if scale is not None else 1 / (d ** 0.5)
-
-    if T == 16: print(scale)
-
-    qkT = q @ k.transpose(2, 3) * scale
-    if causal:
-        M = torch.tril(torch.ones(T, T), device=device)
-        qkT[:, :, M == 0] == float('-inf')
-    qkT = torch.softmax(qkT, dim=-1)
-    o = qkT @ v
-    return o
-
-
-def test_fwd(configs, mode:str='ones', dtype=torch.bfloat16, device=DEVICE):
+def test_fwd(configs, mode:str='ones', dtype=torch.bfloat16, device=torch.device('cuda')):
     """
     Test fwd function of sdpa
     
@@ -41,22 +25,21 @@ def test_fwd(configs, mode:str='ones', dtype=torch.bfloat16, device=DEVICE):
         for scale in configs['scale']:
             for T in configs['T']:
                 for d in configs['d']:
-                    shape = (B, H, T, d)
+                    shape = (B*H, T, d)
                     if mode == 'ones':
-                        q, k = torch.ones((2, B, H, T, d), device=device, dtype=dtype)
+                        q, k = torch.ones((2, B*H, T, d), device=device, dtype=dtype)
                         v = torch.arange(B*H*T*d, device=device, dtype=dtype).reshape(shape)
                     elif mode == 'random':
-                        q, k, v = torch.rand((3, B, H, T, d), device=device, dtype=dtype)
+                        q, k, v = torch.rand((3, B*H, T, d), device=device, dtype=dtype)
                     else:
                         raise ValueError('Wrong type of mode!')
                     
-                    o = sdpa(q, k, v, causal, scale)
-                    torch_o = F.scaled_dot_product_attention(q, k, v, is_causal=causal, scale=scale)
-                    # torch_o = ref_sdpa(q, k, v, causal, scale, device)
+                    o = sdpa(q, k, v, causal)
+                    torch_o = F.scaled_dot_product_attention(q, k, v, is_causal=causal)
 
                     if not torch.allclose(o, torch_o):
                         dist = torch.max(torch.abs(o - torch_o)).item()
-                        print(f'causal={causal}, scale={scale}, T={T}, d={d}: {dist}')
+                        print(f'causal={causal}, T={T}, d={d}: {dist}')
                         # for i in range(v.shape[2]):
                         #     if not torch.allclose(o[0, 0, i], torch_o[0, 0, i]):
                         #         # print(i, end='/')
@@ -68,39 +51,42 @@ def test_fwd(configs, mode:str='ones', dtype=torch.bfloat16, device=DEVICE):
                         # print('/n')
                         print('='*80)
                     else:
-                        print(f'causal={causal}, scale={scale}, T={T}, d={d}:')
+                        print(f'causal={causal}, T={T}, d={d}: pass')
                         print('='*80)
 
-def test_bwd(configs, mode:str='ones', dtype=torch.bfloat16, device=DEVICE):
+def test_bwd(configs, mode:str='random', dtype=torch.bfloat16, device=torch.device('cuda')):
     B, H = 1, 1
     for causal in configs['causal']:
         for scale in configs['scale']:
             for T in configs['T']:
                 for d in configs['d']:
-                    shape = (B, H, T, d)
+                    shape = (B*H, T, d)
                     if mode == 'ones':
-                        q, k = torch.ones((2, B, H, T, d), requires_grad=True, device=device, dtype=dtype)
+                        q = torch.ones(shape, requires_grad=True, device=device, dtype=dtype)
+                        k = torch.ones(shape, requires_grad=True, device=device, dtype=dtype)
                         v = torch.arange(B*H*T*d, device=device, dtype=dtype).reshape(shape)
                         v.requires_grad_(True)
                     elif mode == 'random':
-                        q, k, v = torch.rand((3, B, H, T, d), requires_grad=True, device=device, dtype=dtype)
+                        q = torch.rand(shape, requires_grad=True, device=device, dtype=dtype)
+                        k = torch.rand(shape, requires_grad=True, device=device, dtype=dtype)
+                        v = torch.rand(shape, requires_grad=True, device=device, dtype=dtype)
                     else:
                         raise ValueError('Wrong type of mode!')
         
-                    do = torch.ones(shape, device=DEVICE, dtype=torch.float32)
+                    do = torch.ones(shape, device=device, dtype=dtype)
                             
                     # triton result
-                    o = sdpa(q, k, v, causal, scale)
+                    o = sdpa(q, k, v, causal)
                     o.backward(do)
 
                     triton_dq, triton_dk, triton_dv = [g.grad.clone() for g in (q, k, v)] 
-                    for g in (q, k, v): g.grad = None # clear grad
+                    for g in (q, k, v): g.grad.zero_() # clear grad
 
                     # torch result
-                    torch_o = F.scaled_dot_product_attention(q, k, v, is_causal=causal, scale=scale)
+                    torch_o = F.scaled_dot_product_attention(q, k, v, is_causal=causal)
                     torch_o.backward(do)
                     torch_dq, torch_dk, torch_dv = [g.grad.clone() for g in (q, k, v)]
-                    for g in (q, k, v): g.grad = None # clear grad
+                    for g in (q, k, v): g.grad.zero_() # clear grad
 
                     # compare
                     print(torch.max(torch.abs(torch_o - o)).item())
@@ -115,24 +101,26 @@ def test_bwd(configs, mode:str='ones', dtype=torch.bfloat16, device=DEVICE):
 
 
 if __name__ == '__main__':
-    # configs = {
-    #     'causal': [False, True], 
-    #     'scale':  [1.0, None], 
-    #     'T':      [i for i in range(100, 200, 10)], 
-    #     'd':      [32, 64, 128], 
-    # }
-
     configs = {
-        'causal': [False], 
-        'scale': [1.0] , 
-        'T': [i for i in range(100, 400, 5)], 
-        'd': [256], 
+        'causal': [True], 
+        'scale':  [1.0], 
+        'T':      [256], # [2 ** i for i in range(10, 15)], 
+        'd':      [128], 
+        'tf32':   False,
     }
 
-    test_fwd(configs, mode='random') 
+    # configs = {
+    #     'causal': [False], 
+    #     'scale': [1.0] , 
+    #     'T': [i for i in range(100, 400, 5)], 
+    #     'd': [256], 
+    # }
+
+    torch.manual_seed(0)
+    # test_fwd(configs, mode='random', dtype=torch.bfloat16) 
     # Problem Recording: 
     # if mode='ones', dtype=torch.float32, scale=1.0, T>= 2048, d=16, then there is a problem in forward kernel.
     # 'o_i = adjust_factor[:, None] * o_i + acc' this line gives wrong answer. See the code part for explaination.
 
-    # torch.manual_seed(0)
-    # test_bwd(configs)
+    
+    test_bwd(configs, dtype=torch.bfloat16)

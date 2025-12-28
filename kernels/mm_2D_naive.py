@@ -12,6 +12,7 @@ def naive_mm_kernel_use_ptr_arithmetic(
     BLOCK_N: tl.constexpr, 
     BLOCK_K: tl.constexpr,
     GROUP_SIZE: tl.constexpr, # do not delete this to keep the signature the same as the grouped kernel           
+    BF: tl.constexpr,
 ):
     # locate start point
     pid_m, pid_n = tl.program_id(0), tl.program_id(1)
@@ -33,13 +34,16 @@ def naive_mm_kernel_use_ptr_arithmetic(
         w = tl.load(w_ptrs, mask=offsets_k[:, None] < K - k * BLOCK_K, other=0.0)
 
         # - computation
-        # acc = tl.dot(x, w, acc, allow_tf32=False) # set allow_tf32=False explicitly
-        acc = tl.dot(x, w, acc, input_precision="ieee")
+        # acc = tl.dot(x, w, acc, allow_tf32=False) # set allow_tf32=False explicitly is deprecated
+        if BF == 1: 
+            acc = tl.dot(x, w, acc) # tf32 would not activated on non-float32 dtype
+        else:
+            acc = tl.dot(x, w, acc, input_precision="ieee") # do not use tf32 for float32 type of data
 
         # - update pointer position
         x_ptrs += BLOCK_K * stride_x_k # pointer arithmetic way
         w_ptrs += BLOCK_K * stride_w_k
-    acc = acc.to(dtype=tl.bfloat16)
+    if BF == 1: acc = acc.to(dtype=tl.bfloat16)
 
     # y_ptrs = y_ptr + offsets_m[:, None] * N + offsets_n[None, :]
     y_ptrs = y_ptr + offsets_m[:, None] * stride_y_m + offsets_n[None, :] * stride_y_n
@@ -57,6 +61,7 @@ def naive_mm_kernel_use_block_ptr(
     BLOCK_N: tl.constexpr, 
     BLOCK_K: tl.constexpr,
     GROUP_SIZE: tl.constexpr, # do not delete this to keep the signature the same as the grouped kernel
+    BF: tl.constexpr, 
 ):
     """
     Matrix multiplication of two tensors: c = a @ b
@@ -114,11 +119,15 @@ def naive_mm_kernel_use_block_ptr(
 
         # - computation
         # acc = tl.dot(x, w, acc, allow_tf32=False) # set allow_tf32=False explicitly
-        acc = tl.dot(x, w, acc, input_precision="ieee")
+        if BF == 1: 
+            acc = tl.dot(x, w, acc) # tf32 would not activated on non-float32 dtype
+        else:
+            acc = tl.dot(x, w, acc, input_precision="ieee") # do not use tf32 for float32 type of data
+
 
         # - update pointer position
         x_block_ptr = x_block_ptr.advance((0, BLOCK_K))
         w_block_ptr = w_block_ptr.advance((BLOCK_K, 0))
-    acc = acc.to(dtype=tl.bfloat16)
+    if BF == 1: acc = acc.to(dtype=tl.bfloat16)
     tl.store(y_block_ptr, acc, boundary_check=(0, 1))
 

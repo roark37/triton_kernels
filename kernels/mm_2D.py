@@ -10,6 +10,7 @@ def grouped_mm_2D_kernel(
     stride_y_m, stride_y_n,
     BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
     GROUP_SIZE: tl.constexpr, # how many blocks along the m(row) direction per group
+    BF: tl.constexpr, # if BF is 1, the dtype is bfloat16, elif BF is 0, dtype is float32
 ):
     """
         - use two dimensional pids. 
@@ -60,7 +61,7 @@ def grouped_mm_2D_kernel(
         offsets=(id_data_block_m * BLOCK_M, id_data_block_n * BLOCK_N), 
         block_shape=(BLOCK_M, BLOCK_N),
         order=(0, 1),   
-    )    
+    )
     # Accumulate result
     acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
     for k in range(0, tl.cdiv(K, BLOCK_K)):
@@ -69,14 +70,17 @@ def grouped_mm_2D_kernel(
         x = tl.load(x_block_ptr, boundary_check=(0, 1), padding_option='zero')
         w = tl.load(w_block_ptr, boundary_check=(0, 1), padding_option='zero')
         
-        acc = tl.dot(x, w, acc, input_precision="ieee")
+        if BF == 1: 
+            acc = tl.dot(x, w, acc)
+        else:
+            acc = tl.dot(x, w, acc, input_precision="ieee")
         # x_ptrs += BLOCK_K * stride_x_k
         # w_ptrs += BLOCK_K * stride_w_k
         x_block_ptr = x_block_ptr.advance((0, BLOCK_K))
         w_block_ptr = w_block_ptr.advance((BLOCK_K, 0))
     
     # Store result
-    acc = acc.to(dtype=tl.bfloat16)
+    if BF == 1: acc = acc.to(dtype=tl.bfloat16)
     # y_ptrs = y_ptr + offsets_m[:, None] * stride_y_m + offsets_n[None, :] * stride_y_n
     # mask_y = (offsets_m[:, None] < M) & (offsets_n[None, :] < N)
     # tl.store(y_ptrs, acc, mask=mask_y)

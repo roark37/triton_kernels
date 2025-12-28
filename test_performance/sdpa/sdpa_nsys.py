@@ -1,7 +1,7 @@
 import torch
 import triton
 import torch.nn.functional as F
-from functions.SDPA import ScaledDotProductAttention
+from rk.rk_triton.functions.SDPA_3D import ScaledDotProductAttention
 import torch.cuda.nvtx as nvtx
 
 

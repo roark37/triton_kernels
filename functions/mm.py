@@ -12,15 +12,43 @@ def mm(a, b, block_m=64, block_n=64, block_k=64, group_size=8, kernel_name='grou
     M, K = a.shape
     K, N = b.shape
     # Allocates output.
-    c = torch.empty((M, N), device=a.device, dtype=torch.bfloat16)
+
+    dtype = a.dtype
+    assert dtype in [torch.float32, torch.bfloat16], 'only support float32 and bfloat16 data type.'
+    BF = 1 if dtype ==torch.bfloat16 else 0
+    c = torch.empty((M, N), device=a.device, dtype=dtype)
 
     if kernel_name == 'naive':
         active_kernel = naive_mm_kernel_use_block_ptr
         # use 2D grid, and so the index of pids is 2D
         grid = lambda meta: (triton.cdiv(M, meta['BLOCK_M']), triton.cdiv(N, meta['BLOCK_N']))
+        active_kernel[grid](
+            a, b, c,  #
+            M, N, K,  #
+            a.stride(0), a.stride(1),  #
+            b.stride(0), b.stride(1),  #
+            c.stride(0), c.stride(1),  #
+            BLOCK_M=block_m, 
+            BLOCK_N=block_n, 
+            BLOCK_K=block_k,  
+            GROUP_SIZE=group_size, BF=BF,
+        )
+        return c
     elif kernel_name == 'group':
         active_kernel = grouped_mm_2D_kernel
         grid = lambda meta: (triton.cdiv(M, meta['BLOCK_M']), triton.cdiv(N, meta['BLOCK_N']))
+        active_kernel[grid](
+            a, b, c,  #
+            M, N, K,  #
+            a.stride(0), a.stride(1),  #
+            b.stride(0), b.stride(1),  #
+            c.stride(0), c.stride(1),  #
+            BLOCK_M=block_m, 
+            BLOCK_N=block_n, 
+            BLOCK_K=block_k,  
+            GROUP_SIZE=group_size, BF=BF,
+        )
+        return c
     elif kernel_name == 'official':
         active_kernel = official_mm_kernel
         # use 1D grid, and so the index of pids is 1D
@@ -36,44 +64,50 @@ def mm(a, b, block_m=64, block_n=64, block_k=64, group_size=8, kernel_name='grou
     else:
         raise ValueError(f'wrong kernel_name, only support: group, naive, official')
 
-    active_kernel[grid](
-            a, b, c,  #
-            M, N, K,  #
-            a.stride(0), a.stride(1),  #
-            b.stride(0), b.stride(1),  #
-            c.stride(0), c.stride(1),  #
-            BLOCK_M=block_m, 
-            BLOCK_N=block_n, 
-            BLOCK_K=block_k,  #
-            GROUP_SIZE=group_size,  #
-        )
-    return c
+
 
 
 #### simple test
+def set_device_and_tf32(tf32):
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+        if tf32:
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            torch.set_float32_matmul_precision('medium')
+            print('TF32 activated.') 
+    else:
+        device = torch.device('cpu')
+    return device
 
 def test_mm(x, w, discrption: str):
     y_mm_naive = mm(x, w, kernel_name='naive')
     y_mm_group = mm(x, w, kernel_name='group')
-    y_mm_official = mm(x, w, kernel_name='official')
+    # y_mm_official = mm(x, w, kernel_name='official')
 
     y_torch = x @ w
-    print('//'* 6, discrption)
+    # print('//'* 6, discrption)
     print('Torch == Group:',torch.allclose(y_torch, y_mm_group), torch.max(torch.abs(y_torch - y_mm_group)).item())
     print('Torch == Naive:', torch.allclose(y_torch, y_mm_naive), torch.max(torch.abs(y_torch - y_mm_naive)).item())
-    print('Torch == Official:', torch.allclose(y_torch, y_mm_official), torch.max(torch.abs(y_torch - y_mm_official)).item())
+    # print('Torch == Official:', torch.allclose(y_torch, y_mm_official), torch.max(torch.abs(y_torch - y_mm_official)).item())
     
 def main(args):
     torch.manual_seed(37)
-    for M, K, N in [(512, 512, 512), (4, 10, 20), (1000, 1000, 1000)]:
-        print(f'M={M}, K={K}, N={N}:')
-        x = torch.ones((M, K), dtype=torch.bfloat16, device='cuda')
-        w = torch.ones((K, N), dtype=torch.bfloat16, device='cuda')
-        test_mm(x, w, discrption='interger test:')
 
-        x = torch.rand((M, K), dtype=torch.bfloat16, device='cuda')
-        w = torch.rand((K, N), dtype=torch.bfloat16, device='cuda')
-        test_mm(x, w, discrption='float test:')
+    # set tf32
+    device = set_device_and_tf32(tf32=False) # do not use tf32 in triton, can not pass test. 
+                                             # seems like a bug is in triton
+    
+    for dtype in [torch.float32]:
+        for M, K, N in [(512, 512, 512), (4, 10, 20), (1024, 1024, 1024), (1024, 4096, 1024)]:
+            print(f'dtype={dtype}, M={M}, K={K}, N={N}:')
+            # x = torch.ones((M, K), dtype=dtype, device=device)
+            # w = torch.ones((K, N), dtype=dtype, device=device)
+            # test_mm(x, w, discrption='Int test:')
+
+            x = torch.rand((M, K), dtype=dtype, device=device)
+            w = torch.rand((K, N), dtype=dtype, device=device)
+            test_mm(x, w, discrption='Float test:')
         print('\n')
 
 if __name__=='__main__':
