@@ -41,10 +41,11 @@ def _att_fwd_inner(
         # the value of 'input_precision' arg in 'tl.dot' must be set at compile time, not runtime
         # the solution here is use a tl.constexpr type variable BF16 to determine the condition
         # BF16 is a compile-time constant, so the triton emits two different kernels for this condition
-        if BF16: 
-            s_ij = tl.dot(q_i, k_jT) * qk_scale  # (Br, Bc)
-        else: 
-            s_ij = tl.dot(q_i, k_jT, input_precision="ieee") * qk_scale
+        # if BF16: 
+        #     s_ij = tl.dot(q_i, k_jT) * qk_scale  # (Br, Bc)
+        # else: 
+        #     s_ij = tl.dot(q_i, k_jT, input_precision="ieee") * qk_scale
+        s_ij = tl.dot(q_i, k_jT, input_precision="ieee") * qk_scale
 
         if stage == 2:  # only add mask to tiles on the diagonal
             offsets_h = id_col + tl.arange(0, Bc)
@@ -67,11 +68,12 @@ def _att_fwd_inner(
 
         p_ij = p_ij.to(dtype)
 
-        if BF16: 
-            acc = tl.dot(p_ij, v_j)
-        else: 
-            acc = tl.dot(p_ij, v_j, input_precision="ieee") 
-            
+        # if BF16: 
+        #     acc = tl.dot(p_ij, v_j)
+        # else: 
+        #     acc = tl.dot(p_ij, v_j, input_precision="ieee") 
+        acc = tl.dot(p_ij, v_j, input_precision="ieee") 
+
         o_i = adjust_factor[:, None] * o_i + acc    # (Br, BLOCK_SIZE_D)
         
         # Warning!!! Large o_i would cause problem in this line of code:
@@ -348,10 +350,11 @@ def _bwd_dkdv_inner(
         D_i = tl.load(D_block_ptr_inner, boundary_check=(0,), padding_option='zero')  # (Br,)
 
         # re-compute p_ij
-        if BF16: 
-            s_ij = tl.dot(q_i, k_jT) * scale
-        else: 
-            s_ij = tl.dot(q_i, k_jT, input_precision="ieee") * scale
+        # if BF16: 
+        #     s_ij = tl.dot(q_i, k_jT) * scale
+        # else: 
+        #     s_ij = tl.dot(q_i, k_jT, input_precision="ieee") * scale
+        s_ij = tl.dot(q_i, k_jT, input_precision="ieee") * scale
 
         if stage == 1: # only add mask at the first block when causal is True 
             offsets_h = idx_col * B_outerloop + tl.arange(0, B_outerloop)
@@ -363,21 +366,24 @@ def _bwd_dkdv_inner(
         
         dtyped_p_ij = p_ij.to(dtype)
 
-        if BF16: 
-            dv_j += tl.dot(dtyped_p_ij.T, do_i)  # (Bc, BLOCK_SIZE_D), float32
-            dp_ij = tl.dot(do_i, v_j.T)  
+        # if BF16: 
+        #     dv_j += tl.dot(dtyped_p_ij.T, do_i)  # (Bc, BLOCK_SIZE_D), float32
+        #     dp_ij = tl.dot(do_i, v_j.T)  
 
-        else: 
-            dv_j += tl.dot(dtyped_p_ij.T, do_i, input_precision="ieee")  # (Bc, BLOCK_SIZE_D), float32
-            dp_ij = tl.dot(do_i, v_j.T, input_precision="ieee")
+        # else: 
+        #     dv_j += tl.dot(dtyped_p_ij.T, do_i, input_precision="ieee")  # (Bc, BLOCK_SIZE_D), float32
+        #     dp_ij = tl.dot(do_i, v_j.T, input_precision="ieee")
+        dv_j += tl.dot(dtyped_p_ij.T, do_i, input_precision="ieee")  # (Bc, BLOCK_SIZE_D), float32
+        dp_ij = tl.dot(do_i, v_j.T, input_precision="ieee")
 
         ds_ij = p_ij * (dp_ij - D_i[:, None])  # (Br, Bc), float32
         ds_ij = ds_ij.to(dtype)
 
-        if BF16: 
-            dk_j += tl.dot(ds_ij.T, q_i)  # (Bc, BLOCK_SIZE_D), float32
-        else: 
-            dk_j += tl.dot(ds_ij.T, q_i, input_precision="ieee")  # (Bc, BLOCK_SIZE_D), float32
+        # if BF16: 
+        #     dk_j += tl.dot(ds_ij.T, q_i)  # (Bc, BLOCK_SIZE_D), float32
+        # else: 
+        #     dk_j += tl.dot(ds_ij.T, q_i, input_precision="ieee")  # (Bc, BLOCK_SIZE_D), float32
+        dk_j += tl.dot(ds_ij.T, q_i, input_precision="ieee")  # (Bc, BLOCK_SIZE_D), float32
 
     return dk_j, dv_j
 
@@ -554,10 +560,12 @@ def _bwd_dq_inner(
         v_j = tl.load(v_block_ptr_inner, boundary_check=(0, 1), padding_option='zero')  # (Bc, BLOCK_SIZE_D)
 
         # recompute p
-        if BF16: 
-            s_ij = tl.dot(q_i, k_j.T)  * scale # (Br, Bc), float32
-        else: 
-            s_ij = tl.dot(q_i, k_j.T, input_precision="ieee")  * scale # (Br, Bc), float32
+        s_ij = tl.dot(q_i, k_j.T, input_precision="ieee")  * scale # (Br, Bc), float32
+
+        # if BF16: 
+        #     s_ij = tl.dot(q_i, k_j.T)  * scale # (Br, Bc), float32
+        # else: 
+        #     s_ij = tl.dot(q_i, k_j.T, input_precision="ieee")  * scale # (Br, Bc), float32
         
         # only add mask to tiles on the diagonal
         if stage == 2:
@@ -568,18 +576,21 @@ def _bwd_dq_inner(
 
         p_ij = tl.exp(s_ij - L_i[:, None])
 
-        if BF16: 
-            dp_ij = tl.dot(do_i, v_j.T)  # (Br, Bc)
-        else: 
-            dp_ij = tl.dot(do_i, v_j.T, input_precision="ieee")  # (Br, Bc)
+        dp_ij = tl.dot(do_i, v_j.T, input_precision="ieee")
+
+        # if BF16: 
+        #     dp_ij = tl.dot(do_i, v_j.T)  # (Br, Bc)
+        # else: 
+        #     dp_ij = tl.dot(do_i, v_j.T, input_precision="ieee")  # (Br, Bc)
         
         ds_ij = p_ij * (dp_ij - D_i[:, None])  # (Br, Bc), float32
 
-        if BF16: 
-            # dq_i += tl.dot(ds_ij.to(dtype), k_j)  # (Br, BLOCK_SIZE_D)
-            dq_i += tl.dot(ds_ij.to(dtype), k_j, input_precision="ieee")
-        else: 
-            dq_i += tl.dot(ds_ij, k_j, input_precision="ieee")  # (Br, BLOCK_SIZE_D)
+        dq_i += tl.dot(ds_ij.to(dtype), k_j, input_precision="ieee")  # (Br, BLOCK_SIZE_D)
+
+        # if BF16: 
+        #     dq_i += tl.dot(ds_ij.to(dtype), k_j)  # (Br, BLOCK_SIZE_D)
+        # else: 
+        #     dq_i += tl.dot(ds_ij, k_j, input_precision="ieee")
     
     return dq_i
 

@@ -193,6 +193,7 @@ def run_test(T=256, B=2, H=4, d=128, causal=False, dtype=torch.float32, device="
 
     print('-' * 60)
     print(f'[dtype={dtype}, causal={causal}]')
+    compare_tensor(O_ref, O_torch, dtype, description='output')
     for i, (x, x_torch) in enumerate(zip(d_triton, d_torch)):
         if torch.is_tensor(x) and x is not None:
             description = ['Q', 'K', 'V']
@@ -203,5 +204,8 @@ if __name__ == '__main__':
 
     # Run several tests
     for dtype in [torch.float32, torch.bfloat16]:
+    # for dtype in [torch.bfloat16]:
         for causal in [True, False]:
             run_test(T=1024, B=1, H=1, d=64, causal=causal, dtype=dtype)
+
+# commandline: python -m functions.SDPA
